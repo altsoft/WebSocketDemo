@@ -1,0 +1,4 @@
+project.cleanCommand=../gradlew -b ../build.gradle clean
+project.buildCommand=../gradlew -b ../build.gradle build
+servletContainer.runCommand=../gradlew -b ../build.gradle tomcat
+browser.runCommand=../gradlew -b ../build.gradle browser

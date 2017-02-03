@@ -1,0 +1,383 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'war'
+
+repositories {
+    jcenter()
+    mavenLocal()
+}
+
+configurations {
+    compile.transitive = false
+    pwc.transitive = false
+    wrappers.transitive = false
+    tomcat
+    containerLibs
+}
+
+def platypusJsVersion = '5.11.0'
+def tomcatVersion = '8.5.8'
+
+dependencies {
+    runtime "platypus-js:platypus-js-servlet:$platypusJsVersion",
+            "platypus-js:platypus-js-launcher:$platypusJsVersion",
+            "platypus-js:platypus-js-forms:$platypusJsVersion",
+            "platypus-js:platypus-js-sql-driver-h2:$platypusJsVersion"
+            // ... another sql driver
+    pwc      'platypus-js:platypus-js-web-client:5.11.0'
+    wrappers 'platypus-js:platypus-js-wrappers:5.11.0'
+    tomcat   "org.apache.tomcat:tomcat-catalina:$tomcatVersion",
+             "org.apache.tomcat:tomcat-jasper:$tomcatVersion",
+             "org.apache.tomcat:tomcat-dbcp:$tomcatVersion",
+             "org.apache.tomcat:tomcat-websocket:$tomcatVersion",
+             "org.apache.tomcat:tomcat-jaspic-api:$tomcatVersion"
+    containerLibs 'com.vividsolutions:jts:1.13'
+}
+
+war {
+    webAppDirName = 'src'
+    exclude '.platypus'
+    exclude 'private.properties'
+    exclude 'project.properties'
+}
+
+def pwcDirName = "${webAppDirName}/pwc"
+def wrappersDirName = "${webAppDirName}/WEB-INF/classes"
+def libDirName = "${webAppDirName}/WEB-INF/lib"
+task cleanExplodedPwc(type: Delete) {
+    delete pwcDirName
+}
+clean.dependsOn cleanExplodedPwc
+
+task cleanExplodedWrappers(type: Delete) {
+    file(wrappersDirName).listFiles().each {
+        cleanExplodedWrappers.delete it
+    }
+}
+clean.dependsOn cleanExplodedWrappers
+
+task cleanLib(type: Delete) {
+    file(libDirName).listFiles().each {
+        cleanLib.delete it
+    }
+}
+clean.dependsOn cleanLib
+
+task explodePwc(type: Copy) {
+    configurations.pwc.each {
+        from zipTree(file(it.getAbsolutePath()))
+    }
+    into pwcDirName
+}
+war.dependsOn explodePwc
+
+task explodeWrappers(type: Copy) {
+    configurations.wrappers.each {
+        from zipTree(file(it.getAbsolutePath()))
+    }
+    into wrappersDirName
+}
+war.dependsOn explodeWrappers
+
+task distilleLib(type: Copy) {
+    configurations.runtime.each {
+        from file(it)
+    }
+    into libDirName
+}
+war.dependsOn distilleLib
+
+def tomcatDir = "${buildDir}/tomcat"
+def tomcatBinDir = "${tomcatDir}/bin"
+def sharedLibDir = "${tomcatDir}/lib"
+
+task buildTomcatBin(type: Copy) {
+    configurations.tomcat.each {
+        from file(it)
+    }
+    into tomcatBinDir
+}
+
+task buildContainerLibs(type: Copy) {
+    configurations.containerLibs.each {
+        from file(it)
+    }
+    into sharedLibDir
+}
+
+task buildTomcat() {
+}
+
+buildTomcat.dependsOn buildTomcatBin,
+                      buildContainerLibs
+
+task cleanTomcat(type: Delete){
+    delete tomcatDir
+}
+
+task cleanReports(type: Delete){
+    file("${webAppDirName}/reports").listFiles().each {
+        cleanReports.delete it
+    }
+}
+clean.dependsOn cleanReports
+
+task cleanPub(type: Delete){
+    file("${webAppDirName}/pub").listFiles().each {
+        cleanPub.delete it
+    }
+}
+clean.dependsOn cleanPub
+
+def asProps = { fileName ->
+    def loaded = new Properties()
+    def inputFile = file(fileName)
+    if(inputFile.exists()){
+        inputFile.withInputStream{
+            loaded.load(it)
+        }
+    }
+    return loaded
+}
+
+def check = { map, prop, value ->
+    if(!map.containsKey(prop)){
+        map[prop] = value
+    }
+}
+
+def props = asProps("${webAppDirName}/project.properties")
+check props, 'webApplication.context', 'change-me'
+
+def privateProps = asProps("${webAppDirName}/private.properties")
+check privateProps, 'run.serverType', 'servlet'
+check privateProps, 'http.port', 8085
+check privateProps, 'platypus.port', 7500
+check privateProps, 'platypusClient.logLevel', 'INFO'
+check privateProps, 'platypusClient.debugPort', 5001
+check privateProps, 'platypusServer.logLevel', 'INFO'
+check privateProps, 'platypusServer.debugPort', 5004
+check privateProps, 'servletContainer.logLevel', 'INFO'
+check privateProps, 'servletContainer.debugPort', 5007
+
+def webAppUrl = privateProps['browser.customUrl'] ? privateProps['browser.customUrl'] : "http://localhost:${privateProps['http.port']}/${props['webApplication.context']}"
+def platypusAppUrl = privateProps['platypusClient.customUrl'] ? privateProps['platypusClient.customUrl'] : "platypus://localhost:${privateProps['platypus.port']}"
+
+task configureTomcat(type: Copy){
+    outputs.upToDateWhen { false }
+    from 'tomcat-conf'
+    into "${tomcatDir}/conf"
+    include 'default-web.xml'
+    rename 'default-web.xml', 'web.xml'
+    doLast {
+        def conf = file('tomcat-conf/server.xml').withInputStream {
+            return new XmlParser().parse(it)
+        }
+        def contexts = conf.Service.Engine.Host.Context;
+        if(contexts.isEmpty())
+            throw new GradleException("'Context' tag not found in server.xml or it is not on path: 'Server/Service/Engine/Host/Context'");
+        def contextNode = contexts[0];
+        def datasources = [] as Set
+        props.each {
+            def matcher = (it.key =~ "datasource\\.([a-zA-Z_/\\-]+)\\..*")
+            if(matcher.matches()){
+                def dsName = matcher.group(1)
+                datasources << dsName
+            }
+        }
+        def generalDsName = props['project.generalDataSource']
+        def enableSecurityRealm = privateProps['webApplication.enableSecurityRealm'] == 'true'
+        def realmAdded = false;
+        datasources.each {
+            def dsName = it
+            def dbUrl  = props["datasource.${it}.dburl"]
+            if(!dbUrl)
+                throw new GradleException("'datasource.${it}.dburl' project property not found or is not defined")
+            def jdbcDriverClass = props["datasource.${it}.jdbcDriverClass"]
+            if(!jdbcDriverClass)
+                throw new GradleException("'datasource.${it}.jdbcDriverClass' project property not found or is not defined")
+            def dbUser = props["datasource.${it}.dbuser"]
+            if(!dbUser)
+                throw new GradleException("'datasource.${it}.dbuser' project property not found or is not defined")
+            def dbPassword = props["datasource.${it}.dbpassword"]
+            def dbSchema = props["datasource.${it}.dbschema"]
+            def maxConnections = props["datasource.${it}.maxconnections"]
+            def maxStatements = props["datasource.${it}.maxstatements"]
+            if(enableSecurityRealm && generalDsName && generalDsName == dsName){
+                def realmNode = contextNode.appendNode(new groovy.xml.QName("Realm"), [
+                        'className': "org.apache.catalina.realm.DataSourceRealm",
+                        'dataSourceName': dsName,
+                        'localDataSource': "true",
+                        'roleNameCol': "GROUP_NAME",
+                        'userCredCol': "USR_PASSWD",
+                        'userNameCol': "USR_NAME",
+                        'userRoleTable': "MTD_GROUPS",
+                        'userTable': "MTD_USERS"
+                ])
+                realmNode.appendNode(new groovy.xml.QName("CredentialHandler"), [
+                    className: "org.apache.catalina.realm.MessageDigestCredentialHandler",
+                    algorithm: "md5"
+                    ])
+                realmAdded = true
+            }
+            def dsAttributes = [
+                'name': dsName,
+                'url': dbUrl,
+                'username': dbUser,
+                'driverClassName': jdbcDriverClass,
+                'type': 'javax.sql.DataSource'
+            ]
+            if(dbPassword != null)
+                dsAttributes['password'] = dbPassword
+            /*
+            if(dbSchema != null)
+                dsAttributes['schema'] = dbSchema
+            if(maxConnections != null)
+                dsAttributes['maxActive'] = maxConnections
+            if(maxStatements != null)
+                dsAttributes['maxStatements'] = maxStatements
+            */
+            contextNode.appendNode(new groovy.xml.QName('Resource'), dsAttributes)
+        }
+        if(enableSecurityRealm && !realmAdded){
+            throw new GradleException("Security realm can not be added because general default datasource of project is not defined of it is not found.")
+        }
+        file("${tomcatDir}/conf/server.xml").withOutputStream {
+            groovy.xml.XmlUtil.serialize(conf, it)
+        }
+        def loggingProps = asProps('tomcat-conf/logging.properties')
+        loggingProps['org.apache.juli.FileHandler.level'] = privateProps['servletContainer.logLevel']
+        loggingProps['java.util.logging.ConsoleHandler.level'] = privateProps['servletContainer.logLevel']
+        file("${tomcatDir}/conf/logging.properties").withOutputStream {
+            loggingProps.store(it, 'Tomcat logging configuration. Platypus.js profile.')
+        }
+    }
+}
+
+task tomcat(type: JavaExec) {
+    workingDir tomcatDir
+    classpath fileTree(tomcatBinDir)
+    main 'org.apache.catalina.startup.Bootstrap'
+    jvmArgs '-Xdebug',
+            "-Xrunjdwp:server=y,transport=dt_socket,address=${privateProps['servletContainer.debugPort']},suspend=n",
+            "-Djava.util.logging.config.file=${file(tomcatDir)}/conf/logging.properties",
+            "-Dtomcat.http.port=${privateProps['http.port']}",
+            "-Dapp.context=/${props['webApplication.context']}",
+            "-Dapp.base=${file(webAppDirName)}",
+            "-Dtomcat.shutdown.port=${privateProps['servletContainer.debugPort']}0"
+}
+
+tomcat.dependsOn buildTomcat,
+                 configureTomcat,
+                 distilleLib,
+                 explodeWrappers,
+                 explodePwc
+
+def completeSeArgs = {
+    def args = ['-url', "${file(webAppDirName).toURI().toURL()}"]
+    if (props['run.sourcePath']) args += ['-source-path', "${props['run.sourcePath']}"]
+    if (props['project.generalDataSource']) args += ['-default-datasource', props['project.generalDataSource']]
+    if (props['run.globalAPI'] == 'true') args << '-global-api'
+    def datasources = [] as Set
+    props.each {
+        def matcher = (it.key =~ "datasource\\.(.*)\\..*")
+        if(matcher.matches()){
+            def dsName = matcher.group(1)
+            datasources << dsName
+        }
+    }
+    datasources.each {
+        args += ["-datasource", "$it"]
+        if(props["datasource.${it}.dburl"])
+            args += ['-dburl', "${props["datasource.${it}.dburl"]}"]
+        else
+            throw new GradleException("'datasource.${it}.dburl' project property not found or is not defined")
+        if(props["datasource.${it}.dbuser"])
+            args += ['-dbuser', "${props["datasource.${it}.dbuser"]}"]
+        else
+            throw new GradleException("'datasource.${it}.dbuser' project property not found or is not defined")
+        if(props["datasource.${it}.dbpassword"])
+            args += ['-dbpassword', "${props["datasource.${it}.dbpassword"]}"]
+        if(props["datasource.${it}.dbschema"])
+            args += ['-dbschema', "${props["datasource.${it}.dbschema"]}"]
+        if(props["datasource.${it}.maxconnections"])
+            args += ['-maxconnections', "${props["datasource.${it}.maxconnections"]}"]
+        if(props["datasource.${it}.maxstatements"])
+            args += ['-maxstatements', "${props["datasource.${it}.maxstatements"]}"]
+    }
+    return args
+}
+
+def platypusServerLogDirName = "${buildDir}/platypus-server/logs"
+
+task platypusServer(type: JavaExec) {
+    doFirst {
+        file(platypusServerLogDirName).mkdirs()
+    }
+    classpath fileTree(sharedLibDir), fileTree(libDirName), wrappersDirName
+    main 'com.eas.server.ServerMain'
+    args += completeSeArgs()
+    args += ['-iface', "0.0.0.0:${privateProps['platypus.port']}"]
+    args += ['-appelement', 'start.js']
+    jvmArgs '-Xdebug',
+            "-Xrunjdwp:server=y,transport=dt_socket,address=${privateProps['platypusServer.debugPort']},suspend=n",
+            '-Djava.util.logging.config.class=com.eas.util.logging.LoggersConfig',
+            '-D.handlers=java.util.logging.FileHandler,java.util.logging.ConsoleHandler',
+            "-Djava.util.logging.FileHandler.encoding=utf-8",
+            "-Djava.util.logging.FileHandler.pattern=${platypusServerLogDirName}/server.log",
+            "-Djava.util.logging.FileHandler.level=${privateProps['platypusServer.logLevel']}",
+            '-Djava.util.logging.FileHandler.formatter=java.util.logging.SimpleFormatter',
+            "-Djava.util.logging.ConsoleHandler.level=${privateProps['platypusServer.logLevel']}",
+            '-Djava.util.logging.ConsoleHandler.formatter=java.util.logging.SimpleFormatter'
+}
+platypusServer.dependsOn buildContainerLibs,
+                         distilleLib,
+                         explodeWrappers,
+                         explodePwc
+                         
+def platypusClientLogDirName = "${buildDir}/platypus-client/logs"
+
+task platypusClient(type: JavaExec) {
+    doFirst {
+        file(platypusClientLogDirName).mkdirs()
+    }
+    classpath fileTree(sharedLibDir), fileTree(libDirName), wrappersDirName
+    main 'com.eas.client.application.PlatypusClientApplication'
+    if(privateProps['run.serverType'] == 'servlet'){
+        args += ['-url', webAppUrl]
+        if (props['run.globalAPI'] == 'true') args << '-global-api'
+        if (props['run.sourcePath']) args += ['-source-path', "${props['run.sourcePath']}"]
+    } else if(privateProps['run.serverType'] == 'platypus'){
+        args += ['-url', platypusAppUrl]
+        if (props['run.globalAPI'] == 'true') args << '-global-api'
+        if (props['run.sourcePath']) args += ['-source-path', "${props['run.sourcePath']}"]
+    } else {
+        args += ['-appelement', 'start.js']
+        args += completeSeArgs()
+    }
+    jvmArgs '-Xdebug',
+            "-Xrunjdwp:server=y,transport=dt_socket,address=${privateProps['platypusClient.debugPort']},suspend=n",
+            '-Djava.util.logging.config.class=com.eas.util.logging.LoggersConfig',
+            '-D.handlers=java.util.logging.FileHandler,java.util.logging.ConsoleHandler',
+            "-Djava.util.logging.FileHandler.encoding=utf-8",
+            "-Djava.util.logging.FileHandler.pattern=${platypusClientLogDirName}/client.log",
+            "-Djava.util.logging.FileHandler.level=${privateProps['platypusClient.logLevel']}",
+            '-Djava.util.logging.FileHandler.formatter=java.util.logging.SimpleFormatter',
+            "-Djava.util.logging.ConsoleHandler.level=${privateProps['platypusClient.logLevel']}",
+            '-Djava.util.logging.ConsoleHandler.formatter=java.util.logging.SimpleFormatter'
+}
+platypusClient.dependsOn buildContainerLibs,
+                         distilleLib,
+                         explodeWrappers,
+                         explodePwc
+
+task browser(){
+    doFirst {
+        java.awt.Desktop.desktop.browse webAppUrl.toURI()
+    }
+}
