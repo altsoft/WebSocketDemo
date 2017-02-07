@@ -381,3 +381,38 @@ task browser(){
         java.awt.Desktop.desktop.browse webAppUrl.toURI()
     }
 }
+
+def tomcatServer = null
+task runWebApp(){
+    doFirst {
+        tomcatServer = new ProcessBuilder(tomcat.commandLine)
+        .directory(file(tomcat.workingDir))
+        .redirectErrorStream(true).start()
+        def tomcatStdOut = new InputStreamReader(tomcatServer.getInputStream())
+        try{
+            def tomcatNextLine = tomcatStdOut.readLine()
+            while(!tomcatNextLine.contains('Server startup in')){
+                println(tomcatNextLine)
+                tomcatNextLine = tomcatStdOut.readLine()
+            }
+            println 'Tomcat started'
+            println()
+        } finally {
+            tomcatStdOut.close()
+        }
+		println "Application is now served at ${webAppUrl}"
+		println()
+		println 'To terminate press enter ...'
+		System.in.read()
+		tomcatServer.destroy()
+		tomcatServer.waitFor()
+		println 'Tomcat shutted down'
+		println()
+		println 'Se you next time :)'
+    }
+}
+runWebApp.dependsOn buildTomcat,
+                    configureTomcat,
+                    distilleLib,
+                    explodeWrappers,
+                    explodePwc
