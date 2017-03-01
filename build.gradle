@@ -24,13 +24,13 @@ def platypusJsVersion = '5.11.0'
 def tomcatVersion = '8.5.8'
 
 dependencies {
-    runtime "platypus-js:platypus-js-servlet:$platypusJsVersion",
-            "platypus-js:platypus-js-launcher:$platypusJsVersion",
-            "platypus-js:platypus-js-forms:$platypusJsVersion",
-            "platypus-js:platypus-js-sql-driver-h2:$platypusJsVersion"
+    runtime "com.eas.platypus:platypus-js-servlet:$platypusJsVersion",
+            "com.eas.platypus:platypus-js-launcher:$platypusJsVersion",
+            "com.eas.platypus:platypus-js-forms:$platypusJsVersion",
+            "com.eas.platypus:platypus-js-sql-driver-h2:$platypusJsVersion"
             // ... another sql driver
-    pwc      'platypus-js:platypus-js-web-client:5.11.0'
-    wrappers 'platypus-js:platypus-js-wrappers:5.11.0'
+    pwc      'com.eas.platypus:platypus-js-web-client:5.11.0'
+    wrappers 'com.eas.platypus:platypus-js-wrappers:5.11.0'
     tomcat   "org.apache.tomcat:tomcat-catalina:$tomcatVersion",
              "org.apache.tomcat:tomcat-jasper:$tomcatVersion",
              "org.apache.tomcat:tomcat-dbcp:$tomcatVersion",
