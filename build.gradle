@@ -270,6 +270,16 @@ task tomcat(type: JavaExec) {
             "-Dapp.context=/${props['webApplication.context']}",
             "-Dapp.base=${file(webAppDirName)}",
             "-Dtomcat.shutdown.port=${privateProps['servletContainer.debugPort']}0"
+    doFirst {
+        println()
+        println()
+        println '**********************************'
+        println 'The application will be served at:'
+        println webAppUrl
+        println '**********************************'
+        println()
+        println()
+    }
 }
 
 tomcat.dependsOn buildTomcat,
@@ -378,6 +388,8 @@ platypusClient.dependsOn buildContainerLibs,
 
 task browser(){
     doFirst {
+        println "About to go to:"
+        println webAppUrl
         java.awt.Desktop.desktop.browse webAppUrl.toURI()
     }
 }
@@ -408,7 +420,7 @@ task runWebApp(){
 		tomcatServer.waitFor()
 		println 'Tomcat shutted down'
 		println()
-		println 'Se you next time :)'
+		println 'See you next time :)'
     }
 }
 runWebApp.dependsOn buildTomcat,
