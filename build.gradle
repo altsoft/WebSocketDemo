@@ -29,8 +29,8 @@ dependencies {
             "com.eas.platypus:platypus-js-forms:$platypusJsVersion",
             "com.eas.platypus:platypus-js-sql-driver-h2:$platypusJsVersion"
             // ... another sql driver
-    pwc      'com.eas.platypus:platypus-js-web-client:5.11.0'
-    wrappers 'com.eas.platypus:platypus-js-wrappers:5.11.0'
+    pwc      "com.eas.platypus:platypus-js-web-client:$platypusJsVersion"
+    wrappers "com.eas.platypus:platypus-js-wrappers:$platypusJsVersion"
     tomcat   "org.apache.tomcat:tomcat-catalina:$tomcatVersion",
              "org.apache.tomcat:tomcat-jasper:$tomcatVersion",
              "org.apache.tomcat:tomcat-dbcp:$tomcatVersion",

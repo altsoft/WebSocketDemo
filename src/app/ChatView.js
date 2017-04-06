@@ -12,8 +12,9 @@ define(['logger', 'forms', 'forms/box-pane'], function (Logger, Forms, BoxPane, 
         var self = this
                 , form = Forms.loadForm(ModuleName);
 
-        var wsProxy;
+        form.panel.height = null;
 
+        var wsProxy;
         form.onWindowOpened = function () {
             /**
              * Note that Web Socket endpoint's module should have a solid name.
